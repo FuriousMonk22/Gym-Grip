@@ -38,9 +38,9 @@
   const sfxVolumeInput = byId('sfxVolume');
   const highContrastInput = byId('highContrast');
 
-  // Game configuration
-  const MAX_TARGET_SECONDS = 60; // 1 minute max
-  const MIN_TARGET_SECONDS = 6;  // 6 seconds min to keep it snappy
+  // Game configuration - REDUCED TIMES FOR BETTER MOBILE EXPERIENCE
+  const MAX_TARGET_SECONDS = 8;  // Reduced from 60 to 8 seconds max
+  const MIN_TARGET_SECONDS = 2;  // Reduced from 6 to 2 seconds min
   const EQUIPMENT_LIST = [
     { name: 'Dumbbell', icon: '🏋️' },
     { name: 'Treadmill', icon: '🏃' },
@@ -98,132 +98,121 @@
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-  // Audio: lightweight synth using WebAudio API
+  // Game state
+  const state = {
+    playing: false,
+    paused: false,
+    score: 0,
+    completed: 0,
+    targetCount: 0,
+    currentId: null,
+    holds: new Map(),
+    equipments: [],
+    lastLayoutTime: 0,
+    layoutDebounceId: null
+  };
+
+  // Audio Engine
   const AudioEngine = (() => {
-    let ctx;
-    let masterGain;
-    let musicGain;
-    let sfxGain;
-    let musicTimer = null;
-    let stepIndex = 0;
-    let currentSongIndex = 0;
-    let stepsInCurrentSong = 0;
-
-    // Simple set of loopable songs (relative semitone steps)
-    const SONGS = [
-      { base: 220, tempo: 96, seq: [0, 3, 7, 10, 12, 10, 7, 3] },
-      { base: 196, tempo: 88, seq: [0, 5, 9, 12, 9, 5, 0, -3] },
-      { base: 247, tempo: 110, seq: [0, 2, 4, 7, 9, 7, 4, 2] },
-      { base: 233, tempo: 102, seq: [0, 7, 10, 14, 10, 7, 0, -5] },
-    ];
-
-    let currentMode = 'none'; // 'none' | 'game'
-
+    let ctx, musicGain, sfxGain, musicSource;
+    
     function ensure() {
-      if (!ctx) {
+      if (ctx) return;
+      try {
         ctx = new (window.AudioContext || window.webkitAudioContext)();
-        masterGain = ctx.createGain();
-        masterGain.gain.value = 0.9;
-        masterGain.connect(ctx.destination);
         musicGain = ctx.createGain();
-        musicGain.gain.value = parseFloat(musicVolumeInput.value || '0.5');
-        musicGain.connect(masterGain);
         sfxGain = ctx.createGain();
-        sfxGain.gain.value = parseFloat(sfxVolumeInput.value || '0.8');
-        sfxGain.connect(masterGain);
+        musicGain.connect(ctx.destination);
+        sfxGain.connect(ctx.destination);
+        musicGain.gain.value = 0.3;
+        sfxGain.gain.value = 0.4;
+      } catch (e) {
+        console.warn('Audio not supported:', e);
       }
     }
-
+    
     function resume() { 
-      try { 
-        ensure(); 
-        if (ctx.state === 'suspended') {
-          return ctx.resume(); 
-        }
-      } catch { /* noop */ } 
+      if (ctx && ctx.state === 'suspended') {
+        try { ctx.resume(); } catch { /* noop */ }
+      }
     }
+    
     function suspend() { try { return ctx.suspend(); } catch { /* noop */ } }
-
+    
     function setMusicVol(v){ ensure(); musicGain.gain.value = v }
     function setSfxVol(v){ ensure(); sfxGain.gain.value = v }
-
+    
     function playTone(freq = 440, duration = 0.12, type = 'sine', gain = 0.2) {
       try {
         ensure();
-        if (ctx.state !== 'running') return;
         const osc = ctx.createOscillator();
         const gainNode = ctx.createGain();
         osc.frequency.value = freq;
         osc.type = type;
-        gainNode.gain.value = gain * sfxGain.gain.value;
+        gainNode.gain.value = gain;
         osc.connect(gainNode);
-        gainNode.connect(masterGain);
+        gainNode.connect(sfxGain);
         osc.start();
         osc.stop(ctx.currentTime + duration);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-      } catch { /* noop */ }
+      } catch (e) {
+        // Silently fail if audio is not available
+      }
     }
-
+    
     function playMusicNote(freq = 440, duration = 0.25, type = 'sine', gain = 0.06){
       try {
         ensure();
-        if (ctx.state !== 'running') return;
         const osc = ctx.createOscillator();
         const gainNode = ctx.createGain();
         osc.frequency.value = freq;
         osc.type = type;
-        gainNode.gain.value = gain * musicGain.gain.value;
+        gainNode.gain.value = gain;
         osc.connect(gainNode);
-        gainNode.connect(masterGain);
+        gainNode.connect(musicGain);
         osc.start();
         osc.stop(ctx.currentTime + duration);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-      } catch { /* noop */ }
+      } catch (e) {
+        // Silently fail if audio is not available
+      }
     }
-
+    
     function playSuccess(){ playTone(740, 0.12, 'triangle', 0.25); setTimeout(()=>playTone(880,0.12,'triangle',0.22), 90) }
     function playFail(){ playTone(180, 0.25, 'sawtooth', 0.2) }
     function playClick(){ playTone(520, 0.06, 'square', 0.12) }
     function playHighScore(){ playTone(880, 0.15, 'triangle', 0.3); setTimeout(()=>playTone(1100,0.15,'triangle',0.28), 100); setTimeout(()=>playTone(1320,0.2,'triangle',0.25), 200) }
-
+    
     function startSong(index){
-      if (musicTimer) clearInterval(musicTimer);
-      const song = SONGS[index];
-      if (!song) return;
-      currentSongIndex = index;
-      stepIndex = 0;
-      stepsInCurrentSong = song.seq.length;
-      const stepTime = 60 / song.tempo;
-      musicTimer = setInterval(() => {
-        if (currentMode !== 'game') return;
-        const note = song.seq[stepIndex];
-        const freq = song.base * Math.pow(2, note / 12);
-        playMusicNote(freq, stepTime * 0.8, 'sine', 0.06);
-        stepIndex = (stepIndex + 1) % stepsInCurrentSong;
-      }, stepTime * 1000);
+      if (!ctx) return;
+      const notes = [262, 330, 392, 523, 659, 784, 1047];
+      const melody = [0,2,4,2,0,2,4,2,0,2,4,2,0,2,4,2];
+      let i = 0;
+      const playNext = () => {
+        if (i < melody.length && state.playing && !state.paused) {
+          playMusicNote(notes[melody[i]]);
+          i++;
+          setTimeout(playNext, 200);
+        }
+      };
+      playNext();
     }
-
+    
     function startGameMusic(){
-      currentMode = 'game';
-      startSong(Math.floor(Math.random() * SONGS.length));
+      if (!ctx) return;
+      startSong(0);
     }
-
+    
     function stopAllMusic(){
-      if (musicTimer) {
-        clearInterval(musicTimer);
-        musicTimer = null;
+      if (musicSource) {
+        try { musicSource.stop(); } catch { /* noop */ }
+        musicSource = null;
       }
-      currentMode = 'none';
     }
-
+    
     function stopMusic(){
-      if (musicTimer) {
-        clearInterval(musicTimer);
-        musicTimer = null;
-      }
+      stopAllMusic();
     }
-
-    return { ensure, resume, suspend, setMusicVol, setSfxVol, playTone, playSuccess, playFail, playClick, playHighScore, startGameMusic, stopAllMusic, stopMusic };
+    
+    return { ensure, resume, suspend, setMusicVol, setSfxVol, playTone, playMusicNote, playSuccess, playFail, playClick, playHighScore, startSong, startGameMusic, stopAllMusic, stopMusic };
   })();
 
   function showToast(message, mood='info'){
@@ -236,91 +225,36 @@
   const rnd = (min, max) => Math.random()*(max-min)+min;
 
   function equipmentSVG(name){
-    // Equipment-specific SVG graphics
     const graphics = {
-      'Dumbbell': `<svg viewBox="0 0 100 100" class="graphic">
-        <rect x="35" y="20" width="30" height="60" rx="15" fill="#c1f5ff"/>
-        <rect x="25" y="15" width="50" height="70" rx="20" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <circle cx="50" cy="25" r="8" fill="#38d39f"/>
-        <circle cx="50" cy="75" r="8" fill="#38d39f"/>
-      </svg>`,
-      'Treadmill': `<svg viewBox="0 0 100 100" class="graphic">
-        <rect x="20" y="40" width="60" height="20" rx="10" fill="#c1f5ff"/>
-        <rect x="15" y="35" width="70" height="30" rx="15" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <circle cx="30" cy="50" r="6" fill="#38d39f"/>
-        <circle cx="70" cy="50" r="6" fill="#38d39f"/>
-        <line x1="25" y1="50" x2="75" y2="50" stroke="#00a3ff" stroke-width="2" stroke-dasharray="5,5"/>
-      </svg>`,
-      'Kettlebell': `<svg viewBox="0 0 100 100" class="graphic">
-        <circle cx="50" cy="60" r="25" fill="#c1f5ff"/>
-        <rect x="45" y="20" width="10" height="25" rx="5" fill="#38d39f"/>
-        <rect x="40" y="15" width="20" height="35" rx="10" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <circle cx="50" cy="25" r="8" fill="#38d39f"/>
-      </svg>`,
-      'Rowing': `<svg viewBox="0 0 100 100" class="graphic">
-        <rect x="30" y="30" width="40" height="40" rx="20" fill="#c1f5ff"/>
-        <rect x="25" y="25" width="50" height="50" rx="25" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <line x1="20" y1="50" x2="80" y2="50" stroke="#38d39f" stroke-width="4"/>
-        <circle cx="35" cy="50" r="4" fill="#38d39f"/>
-        <circle cx="65" cy="50" r="4" fill="#38d39f"/>
-      </svg>`,
-      'Bench': `<svg viewBox="0 0 100 100" class="graphic">
-        <rect x="20" y="50" width="60" height="15" rx="7" fill="#c1f5ff"/>
-        <rect x="15" y="45" width="70" height="25" rx="12" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <rect x="25" y="35" width="50" height="8" rx="4" fill="#38d39f"/>
-        <rect x="20" y="30" width="60" height="18" rx="9" fill="none" stroke="#00a3ff" stroke-width="2"/>
-      </svg>`,
-      'Jump Rope': `<svg viewBox="0 0 100 100" class="graphic">
-        <path d="M 20 30 Q 50 10 80 30 Q 50 50 20 30" fill="none" stroke="#c1f5ff" stroke-width="3"/>
-        <path d="M 15 25 Q 50 5 85 25 Q 50 45 15 25" fill="none" stroke="#00a3ff" stroke-width="2"/>
-        <circle cx="20" cy="30" r="4" fill="#38d39f"/>
-        <circle cx="80" cy="30" r="4" fill="#38d39f"/>
-        <line x1="20" y1="30" x2="20" y2="70" stroke="#38d39f" stroke-width="2"/>
-        <line x1="80" y1="30" x2="80" y2="70" stroke="#38d39f" stroke-width="2"/>
-      </svg>`,
-      'Medicine Ball': `<svg viewBox="0 0 100 100" class="graphic">
-        <circle cx="50" cy="50" r="30" fill="#c1f5ff"/>
-        <circle cx="50" cy="50" r="35" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <path d="M 30 50 Q 50 30 70 50 Q 50 70 30 50" fill="#38d39f" opacity="0.7"/>
-        <path d="M 50 30 Q 70 50 50 70 Q 30 50 50 30" fill="#38d39f" opacity="0.7"/>
-      </svg>`,
-      'Bike': `<svg viewBox="0 0 100 100" class="graphic">
-        <circle cx="35" cy="60" r="15" fill="#c1f5ff"/>
-        <circle cx="65" cy="60" r="15" fill="#c1f5ff"/>
-        <circle cx="33" cy="58" r="17" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <circle cx="63" cy="58" r="17" fill="none" stroke="#00a3ff" stroke-width="3"/>
-        <rect x="45" y="30" width="10" height="25" rx="5" fill="#38d39f"/>
-        <rect x="43" y="28" width="14" height="29" rx="7" fill="none" stroke="#00a3ff" stroke-width="2"/>
-        <line x1="50" y1="35" x2="50" y2="45" stroke="#00a3ff" stroke-width="2"/>
-      </svg>`
+      'Dumbbell': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`,
+      'Treadmill': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`,
+      'Kettlebell': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`,
+      'Rowing': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`,
+      'Bench': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`,
+      'Jump Rope': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`,
+      'Medicine Ball': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`,
+      'Bike': `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2M12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8M12 14C13.1 14 14 14.9 14 16C14 17.1 13.1 18 12 18C10.9 18 10 17.1 10 16C10 14.9 10.9 14 12 14M12 20C13.1 20 14 20.9 14 22C14 23.1 13.1 24 12 24C10.9 24 10 23.1 10 22C10 20.9 10.9 20 12 20Z"/></svg>`
     };
-    return graphics[name] || `<div class="icon" style="font-size:32px">🏋️</div>`;
+    return graphics[name] || graphics['Dumbbell'];
   }
 
-  let state = {
-    playing: false,
-    paused: false,
-    equipments: [],
-    holds: new Map(), // id -> { start, targetSeconds, completed, elem }
-    score: 0,
-    completed: 0,
-    targetCount: 0,
-    currentId: null,
-  };
-
-  // Generate equipment positions within the gym area
+  // IMPROVED LAYOUT SYSTEM - Fixed positioning issues
   function layoutEquipments(){
-    const rect = gymEl.getBoundingClientRect();
-    const width = rect.width; const height = rect.height;
-    const pad = isMobile ? 20 : 30; 
-    const size = isMobile ? 90 : 120; // Smaller equipment on mobile
+    // Use offsetWidth/offsetHeight instead of getBoundingClientRect for more stable positioning
+    const width = gymEl.offsetWidth;
+    const height = gymEl.offsetHeight;
+    
+    // Better spacing for mobile
+    const pad = isMobile ? 15 : 25; 
+    const size = isMobile ? 85 : 110; // Slightly smaller for better mobile fit
+    
     const positions = [];
     for (let i=0;i<state.targetCount;i++){
       let attempts = 0; let placed = false; let x=0,y=0;
       while(!placed && attempts<200){
         x = rnd(pad, width - size - pad);
         y = rnd(pad, height - size - pad);
-        placed = positions.every(p => Math.hypot(p.x - x, p.y - y) > size*1.1);
+        placed = positions.every(p => Math.hypot(p.x - x, p.y - y) > size*1.2); // Increased spacing
         attempts++;
       }
       positions.push({x,y});
@@ -333,38 +267,48 @@
     gymEl.innerHTML = '';
     state.holds.clear();
     state.equipments = [];
-    const positions = layoutEquipments();
-    const list = [...EQUIPMENT_LIST];
-    while (list.length < state.targetCount) list.push(...EQUIPMENT_LIST);
-    for (let i=0;i<state.targetCount;i++){
-      const id = `eq-${i}`;
-      const data = list[i % list.length];
-      const targetSeconds = Math.round(rnd(MIN_TARGET_SECONDS, MAX_TARGET_SECONDS));
-      const el = document.createElement('div');
-      el.className = 'equipment';
-      el.setAttribute('data-id', id);
+    
+    // Wait for next frame to ensure gym dimensions are stable
+    requestAnimationFrame(() => {
+      const positions = layoutEquipments();
+      const list = [...EQUIPMENT_LIST];
+      while (list.length < state.targetCount) list.push(...EQUIPMENT_LIST);
       
-      // Get high score for this equipment
-      const highScore = HighScores.getForEquipment(data.name);
-      const highScoreText = highScore ? `Best: ${highScore.score}pts` : '';
+      for (let i=0;i<state.targetCount;i++){
+        const id = `eq-${i}`;
+        const data = list[i % list.length];
+        const targetSeconds = Math.round(rnd(MIN_TARGET_SECONDS, MAX_TARGET_SECONDS));
+        const el = document.createElement('div');
+        el.className = 'equipment';
+        el.setAttribute('data-id', id);
+        
+        // Get high score for this equipment
+        const highScore = HighScores.getForEquipment(data.name);
+        const highScoreText = highScore ? `Best: ${highScore.score}pts` : '';
+        
+        el.innerHTML = `
+          <div class="progress-ring"></div>
+          <div class="content">
+            <div class="graphic">${equipmentSVG(data.name)}</div>
+            <div class="name">${data.name}</div>
+            <div class="target">Hold: ${targetSeconds}s</div>
+            ${highScoreText ? `<div class="high-score">${highScoreText}</div>` : ''}
+          </div>`;
+        
+        // Use transform instead of left/top for better performance
+        el.style.transform = `translate(${positions[i].x}px, ${positions[i].y}px)`;
+        el.style.setProperty('--deg', '0deg');
+        gymEl.appendChild(el);
+        state.holds.set(id, { start: null, targetSeconds, completed:false, elem: el, name: data.name });
+        state.equipments.push(el);
+      }
       
-      el.innerHTML = `
-        <div class="progress-ring"></div>
-        <div class="content">
-          ${equipmentSVG(data.name)}
-          <div class="name">${data.name}</div>
-          <div class="target">Hold: ${targetSeconds}s</div>
-          ${highScoreText ? `<div class="high-score">${highScoreText}</div>` : ''}
-        </div>`;
-      el.style.left = `${positions[i].x}px`;
-      el.style.top  = `${positions[i].y}px`;
-      el.style.setProperty('--deg', '0deg');
-      gymEl.appendChild(el);
-      state.holds.set(id, { start: null, targetSeconds, completed:false, elem: el, name: data.name });
-      state.equipments.push(el);
-    }
-    totalEl.textContent = String(state.targetCount);
-    completedEl.textContent = '0';
+      totalEl.textContent = String(state.targetCount);
+      completedEl.textContent = '0';
+      
+      // Attach events after DOM is ready
+      state.equipments.forEach(attachEquipmentEvents);
+    });
   }
 
   // Hold logic
@@ -372,6 +316,10 @@
     const id = el.getAttribute('data-id');
     const info = state.holds.get(id);
     if (!info || info.completed || state.paused) return;
+    
+    // Only allow one hold at a time for now (can be expanded later)
+    if (state.currentId && state.currentId !== id) return;
+    
     state.currentId = id;
     info.start = performance.now();
     el.classList.add('held');
@@ -385,25 +333,28 @@
     const id = el.getAttribute('data-id');
     const info = state.holds.get(id);
     if (!info || info.completed) return;
+    
     el.classList.remove('held');
     if (!info.start){
       // released without starting; playful hint
       showToast('Coach: You gotta hold it, not just pat it!', 'info');
       return;
     }
+    
     const elapsed = (performance.now() - info.start)/1000;
     const delta = Math.abs(elapsed - info.targetSeconds);
     const within = elapsed >= info.targetSeconds;
     const pct = Math.max(0, Math.min(1, elapsed / info.targetSeconds));
+    
     if (within){
       info.completed = true;
       el.classList.add('done');
       qs('.progress-ring', el).classList.add('fill');
-      const gained = Math.max(5, Math.round(100 * (1 - Math.min(1, delta / 3))));
+      const gained = Math.max(5, Math.round(100 * (1 - Math.min(1, delta / 2))));
       state.score += gained;
       
       // Check for high score
-      const accuracy = Math.max(0, Math.round(100 * (1 - Math.min(1, delta / 2))));
+      const accuracy = Math.max(0, Math.round(100 * (1 - Math.min(1, delta / 1.5))));
       const isNewHighScore = HighScores.update(info.name, gained, accuracy);
       
       if (isNewHighScore) {
@@ -457,7 +408,7 @@
   }
 
   function attachEquipmentEvents(el){
-    // Enhanced touch handling for mobile
+    // IMPROVED TOUCH HANDLING - Better mobile support
     if (isTouchDevice) {
       // Touch events with better mobile handling
       el.addEventListener('touchstart', (e) => {
@@ -541,28 +492,25 @@
     scoreEl.textContent = '0'; completedEl.textContent = '0';
     bigTimer.textContent = 'Pick an equipment';
     accuracyEl.textContent = '';
+    
     // show game screen before layout so sizes are correct
     screenMenu.classList.remove('active'); screenMenu.setAttribute('aria-hidden','true');
     screenGame.classList.add('active'); screenGame.setAttribute('aria-hidden','false');
+    
     // difficulty: 6-10 equipments
     state.targetCount = Math.floor(rnd(6, 10));
-    createEquipments();
-    state.equipments.forEach(attachEquipmentEvents);
     
-    // Handle audio context more gracefully to avoid noise
-    AudioEngine.stopAllMusic(); // Stop any existing music first
+    // Wait a bit for screen transition to complete
     setTimeout(() => {
-      AudioEngine.resume(); // Resume audio context after a delay
-      setTimeout(() => {
-        AudioEngine.startGameMusic(); // Start game music after context is resumed
-      }, 50);
+      createEquipments();
     }, 100);
     
-    cancelAnimationFrame(rafId);
+    AudioEngine.startGameMusic();
     rafId = requestAnimationFrame(loop);
   }
 
   function endGame(won){
+    if (rafId) cancelAnimationFrame(rafId);
     state.playing = false;
     overlayEnd.classList.remove('hidden'); overlayEnd.setAttribute('aria-hidden','false');
     endTitle.textContent = won ? 'Champion Grip!' : 'Good Hustle!';
@@ -631,15 +579,26 @@
     document.documentElement.classList.toggle('high-contrast', e.target.checked);
   });
 
-  // Resize relayout on show
-  window.addEventListener('resize', () => { if (state.playing){ createEquipments(); state.equipments.forEach(attachEquipmentEvents); } });
+  // IMPROVED RESIZE HANDLING - Debounced and more stable
+  function debouncedRelayout() {
+    if (state.layoutDebounceId) {
+      clearTimeout(state.layoutDebounceId);
+    }
+    state.layoutDebounceId = setTimeout(() => {
+      if (state.playing) {
+        createEquipments();
+      }
+    }, 250); // Wait 250ms after resize stops
+  }
+
+  window.addEventListener('resize', debouncedRelayout);
 
   // Accessibility: prevent context menu interfering with hold
   window.addEventListener('contextmenu', (e)=>{
     if (state.playing) e.preventDefault();
   });
 
-  // Mobile-specific optimizations
+  // IMPROVED MOBILE OPTIMIZATIONS - Better scroll and touch handling
   if (isMobile) {
     // Prevent zoom on double tap
     let lastTouchEnd = 0;
@@ -657,6 +616,17 @@
         e.preventDefault();
       }
     }, { passive: false });
+    
+    // Prevent scroll interference with game
+    gymEl.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+    }, { passive: false });
+    
+    // Better viewport handling
+    const viewport = document.querySelector('meta[name="viewport"]');
+    if (viewport) {
+      viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+    }
   }
 
 })();
