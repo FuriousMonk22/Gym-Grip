@@ -19,6 +19,11 @@ body{
   background: radial-gradient(1200px 800px at 20% -10%, #15213e, transparent),
               radial-gradient(1000px 600px at 120% 10%, #1b2b57, transparent),
               var(--bg);
+  /* Mobile optimizations */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .screen{ display:none; height:100vh; width:100vw; padding:24px }
@@ -31,6 +36,22 @@ body{
   margin:0;
   text-shadow:0 6px 0 #0003, 0 0 36px #00a3ff55;
 }
+
+/* Mobile title adjustments */
+@media (max-width: 768px) {
+  .title h1 {
+    font-size: 48px;
+    letter-spacing: 1px;
+  }
+}
+
+@media (max-width: 480px) {
+  .title h1 {
+    font-size: 36px;
+    letter-spacing: 0.5px;
+  }
+}
+
 .subtitle{ color:var(--muted); margin:8px 0 0 0; text-align:center }
 
 .menu-buttons{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:center }
@@ -38,11 +59,14 @@ body{
   appearance:none; border:none; background:linear-gradient(180deg, #243457, #14213d);
   color:var(--fg); padding:12px 18px; border-radius:12px; cursor:pointer; font-weight:600; box-shadow: 0 8px 24px #0005;
   transition: transform .06s ease, background .2s ease, box-shadow .2s ease;
+  /* Mobile touch improvements */
+  min-height: 44px;
+  min-width: 44px;
 }
 .btn:hover{ transform: translateY(-2px); box-shadow: 0 12px 28px #0007 }
 .btn:active{ transform: translateY(0) scale(.98) }
 .btn.primary{ background:linear-gradient(180deg, var(--accent), var(--accent-2)); color:#03131b }
-.btn.small{ padding:8px 12px; font-size:14px }
+.btn.small{ padding:8px 12px; font-size:14px; min-height: 36px; min-width: 36px }
 
 .panel{
   background: #0f1b2f; border:1px solid #284071; border-radius:16px; padding:16px; width:min(560px, 90vw);
@@ -66,6 +90,45 @@ body{
 .gym-clock{ font-family: 'Bangers', cursive; font-size:20px; letter-spacing:1px; color:#a7ffcf; background:#0f1b2f; border:1px solid #284071; padding:6px 10px; border-radius:10px; margin-left:8px }
 .hud-right{ display:flex; align-items:center; gap: 12px; margin-left: 8px }
 
+/* Mobile HUD adjustments */
+@media (max-width: 768px) {
+  .hud {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  
+  .hud-left, .hud-right {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+  }
+  
+  .big-timer {
+    font-size: 24px;
+    order: -1;
+  }
+  
+  .gym-clock {
+    font-size: 16px;
+    padding: 4px 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .hud {
+    padding: 8px 12px;
+  }
+  
+  .big-timer {
+    font-size: 20px;
+  }
+  
+  .hud .score, .hud .completed {
+    font-size: 14px;
+  }
+}
+
 .gym{ position:relative; width:min(1100px, 92vw); height:70vh; margin:18px auto; border-radius:18px;
   background:
     linear-gradient(180deg, #0f1628, #0b1222 30%, #0b1222),
@@ -74,16 +137,99 @@ body{
   overflow:hidden;
 }
 
+/* Mobile gym adjustments */
+@media (max-width: 768px) {
+  .gym {
+    height: 60vh;
+    margin: 12px auto;
+    border-radius: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .gym {
+    height: 55vh;
+    margin: 8px auto;
+    border-radius: 8px;
+  }
+}
+
 .equipment{ position:absolute; width:120px; height:120px; border-radius:16px; display:flex; align-items:center; justify-content:center;
   background: linear-gradient(145deg, #1e2e52, #0e1b33); border:1px solid #284071; box-shadow: 0 10px 24px #0006;
   cursor:pointer; user-select:none; -webkit-user-select:none; touch-action:none; color:#def5ff; text-align:center; padding:8px;
+  /* Mobile touch improvements */
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 .equipment .name{ font-weight:800; letter-spacing:.3px; margin-top:4px }
 .equipment .target{ font-size:12px; color:#97b6e3; margin-top:4px }
+.equipment .high-score{ font-size:11px; color:var(--accent); margin-top:2px; font-weight:600; text-shadow: 0 0 8px var(--accent); }
 .equipment:hover{ outline:2px solid #00a3ff88 }
 .equipment.held{ outline:3px solid var(--accent); transform: translateY(-2px); box-shadow: 0 18px 30px #0008 }
 .equipment.done{ background: linear-gradient(145deg, #1d3f3a, #0e2a24); border-color:#0a7a4a }
 .equipment.disabled{ opacity:.5; pointer-events:none }
+
+/* Equipment SVG graphics */
+.equipment .graphic {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 4px;
+}
+
+/* Mobile equipment adjustments */
+@media (max-width: 700px){
+  .equipment{ 
+    width:100px; 
+    height:100px; 
+    padding: 6px;
+    border-radius: 12px;
+  }
+  
+  .equipment .graphic {
+    width: 40px;
+    height: 40px;
+  }
+  
+  .equipment .name {
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  
+  .equipment .target {
+    font-size: 10px;
+    margin-top: 2px;
+  }
+  
+  .equipment .high-score {
+    font-size: 9px;
+    margin-top: 1px;
+  }
+}
+
+@media (max-width: 480px) {
+  .equipment {
+    width: 90px;
+    height: 90px;
+    padding: 4px;
+    border-radius: 8px;
+  }
+  
+  .equipment .graphic {
+    width: 36px;
+    height: 36px;
+  }
+  
+  .equipment .name {
+    font-size: 11px;
+  }
+  
+  .equipment .target {
+    font-size: 9px;
+  }
+  
+  .equipment .high-score {
+    font-size: 8px;
+  }
+}
 
 .progress-ring{ position:absolute; inset: -8px; border-radius:18px; pointer-events:none; z-index:0;
   background: conic-gradient(var(--accent) var(--deg), #273a63 0);
@@ -93,7 +239,6 @@ body{
 }
 .progress-ring.fill{ box-shadow: 0 0 16px var(--accent-2) inset }
 
-.equipment .graphic{ filter: drop-shadow(0 4px 8px #0006) }
 .equipment .content{ position:relative; z-index:1 }
 
 .overlay{ position:fixed; inset:0; background:#020713c0; display:flex; align-items:center; justify-content:center; z-index:20 }
@@ -101,13 +246,119 @@ body{
 .card{ background:#0f1b2f; border:1px solid #284071; border-radius:18px; box-shadow:0 20px 60px #000a; padding:20px; width:min(520px, 92vw) }
 .card h2{ margin:0 0 12px 0 }
 
-.toast{ position:fixed; bottom:16px; left:50%; transform: translateX(-50%); background:#0f1b2f; border:1px solid #3a507f; color:#e3f0ff; padding:10px 14px; border-radius:12px; box-shadow:0 12px 24px #0008; z-index:40 }
+/* Mobile overlay adjustments */
+@media (max-width: 480px) {
+  .card {
+    padding: 16px;
+    border-radius: 12px;
+  }
+  
+  .card h2 {
+    font-size: 18px;
+    margin-bottom: 8px;
+  }
+}
+
+.toast{ position:fixed; bottom:16px; left:50%; transform: translateX(-50%); background:#0f1b2f; border:1px solid #3a507f; color:#e3f0ff; padding:10px 14px; border-radius:12px; box-shadow:0 12px 24px #0008; z-index:40; max-width: 90vw; }
 .toast.hidden{ display:none }
+
+/* Toast mood variations */
+.toast.good {
+  border-color: var(--good);
+  background: #0f1b2f;
+}
+
+.toast.bad {
+  border-color: var(--bad);
+  background: #0f1b2f;
+}
+
+.toast.info {
+  border-color: var(--accent-2);
+  background: #0f1b2f;
+}
 
 .high-contrast body, .high-contrast .gym{ filter: contrast(1.2) }
 
-@media (max-width: 700px){
-  .equipment{ width:100px; height:100px }
+/* Additional mobile optimizations */
+@media (max-width: 768px) {
+  .screen {
+    padding: 16px;
+  }
+  
+  .menu-buttons {
+    gap: 8px;
+  }
+  
+  .btn {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+  
+  .panel {
+    padding: 12px;
+    border-radius: 12px;
+  }
+  
+  .toast {
+    bottom: 12px;
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .screen {
+    padding: 12px;
+  }
+  
+  .menu-buttons {
+    gap: 6px;
+  }
+  
+  .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  
+  .panel {
+    padding: 10px;
+    border-radius: 8px;
+  }
+  
+  .toast {
+    bottom: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+}
+
+/* Landscape mobile adjustments */
+@media (max-height: 500px) and (orientation: landscape) {
+  .screen {
+    padding: 8px;
+  }
+  
+  .title h1 {
+    font-size: 32px;
+    margin-bottom: 4px;
+  }
+  
+  .subtitle {
+    margin: 4px 0;
+  }
+  
+  .gym {
+    height: 50vh;
+  }
+  
+  .hud {
+    padding: 8px 12px;
+  }
+  
+  .big-timer {
+    font-size: 18px;
+  }
 }
 
 

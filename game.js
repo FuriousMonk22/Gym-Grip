@@ -52,6 +52,52 @@
     { name: 'Bike', icon: '🚴' },
   ];
 
+  // High Score System
+  const HighScores = (() => {
+    const STORAGE_KEY = 'gym-grip-highscores';
+    
+    function get() {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        return stored ? JSON.parse(stored) : {};
+      } catch {
+        return {};
+      }
+    }
+    
+    function set(scores) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(scores));
+      } catch {
+        // Silently fail if localStorage is not available
+      }
+    }
+    
+    function update(equipmentName, score, accuracy) {
+      const scores = get();
+      if (!scores[equipmentName] || score > scores[equipmentName].score) {
+        scores[equipmentName] = { score, accuracy, date: new Date().toISOString() };
+        set(scores);
+        return true; // New high score
+      }
+      return false; // Not a high score
+    }
+    
+    function getForEquipment(equipmentName) {
+      return get()[equipmentName] || null;
+    }
+    
+    function getAll() {
+      return get();
+    }
+    
+    return { get, set, update, getForEquipment, getAll };
+  })();
+
+  // Mobile detection and touch handling
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
   // Audio: lightweight synth using WebAudio API
   const AudioEngine = (() => {
     let ctx;
@@ -102,201 +148,155 @@
     function setSfxVol(v){ ensure(); sfxGain.gain.value = v }
 
     function playTone(freq = 440, duration = 0.12, type = 'sine', gain = 0.2) {
-      ensure();
-      // Only play if audio context is running
-      if (ctx.state !== 'running') return;
-      
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = type;
-      osc.frequency.value = freq;
-      g.gain.value = 0.0001;
-      osc.connect(g);
-      g.connect(sfxGain);
-      const t = ctx.currentTime;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-      osc.start();
-      osc.stop(t + duration + 0.02);
+      try {
+        ensure();
+        if (ctx.state !== 'running') return;
+        const osc = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        osc.frequency.value = freq;
+        osc.type = type;
+        gainNode.gain.value = gain * sfxGain.gain.value;
+        osc.connect(gainNode);
+        gainNode.connect(masterGain);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      } catch { /* noop */ }
     }
 
     function playMusicNote(freq = 440, duration = 0.25, type = 'sine', gain = 0.06){
-      ensure();
-      // Only play if audio context is running
-      if (ctx.state !== 'running') return;
-      
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = type;
-      osc.frequency.value = freq;
-      g.gain.value = 0.0001;
-      osc.connect(g); g.connect(musicGain);
-      const t = ctx.currentTime;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-      osc.start(t);
-      osc.stop(t + duration + 0.05);
+      try {
+        ensure();
+        if (ctx.state !== 'running') return;
+        const osc = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        osc.frequency.value = freq;
+        osc.type = type;
+        gainNode.gain.value = gain * musicGain.gain.value;
+        osc.connect(gainNode);
+        gainNode.connect(masterGain);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      } catch { /* noop */ }
     }
 
     function playSuccess(){ playTone(740, 0.12, 'triangle', 0.25); setTimeout(()=>playTone(880,0.12,'triangle',0.22), 90) }
     function playFail(){ playTone(180, 0.25, 'sawtooth', 0.2) }
     function playClick(){ playTone(520, 0.06, 'square', 0.12) }
+    function playHighScore(){ playTone(880, 0.15, 'triangle', 0.3); setTimeout(()=>playTone(1100,0.15,'triangle',0.28), 100); setTimeout(()=>playTone(1320,0.2,'triangle',0.25), 200) }
 
     function startSong(index){
-      ensure();
-      if (musicTimer){ clearInterval(musicTimer); musicTimer = null; }
-      currentSongIndex = index % SONGS.length;
-      const song = SONGS[currentSongIndex];
+      if (musicTimer) clearInterval(musicTimer);
+      const song = SONGS[index];
+      if (!song) return;
+      currentSongIndex = index;
       stepIndex = 0;
-      stepsInCurrentSong = song.seq.length * 32; // song length in steps
-      const stepMs = 60000 / (song.tempo * 2); // 8th-note grid
-      musicTimer = setInterval(()=>{
-        const s = SONGS[currentSongIndex];
-        const deg = s.seq[stepIndex % s.seq.length];
-        const base = s.base;
-        const dur = (60000 / s.tempo) / 1000 * 0.9; // mostly quarter
-        // 3 voices at different timbres/octaves
-        playMusicNote(base * Math.pow(2, deg/12), dur, 'sine', 0.05);
-        if (stepIndex % 2 === 0){
-          playMusicNote(base*2 * Math.pow(2, deg/12), dur*0.6, 'triangle', 0.03);
-        }
-        if (stepIndex % 4 === 0){
-          const bassDeg = s.seq[(stepIndex/4|0)%s.seq.length] - 12;
-          playMusicNote(base/2 * Math.pow(2, bassDeg/12), dur*1.2, 'square', 0.02);
-        }
-        stepIndex++;
-        if (stepIndex >= stepsInCurrentSong){
-          // advance to next song, loop back after last
-          startSong((currentSongIndex + 1) % SONGS.length);
-        }
-      }, stepMs);
+      stepsInCurrentSong = song.seq.length;
+      const stepTime = 60 / song.tempo;
+      musicTimer = setInterval(() => {
+        if (currentMode !== 'game') return;
+        const note = song.seq[stepIndex];
+        const freq = song.base * Math.pow(2, note / 12);
+        playMusicNote(freq, stepTime * 0.8, 'sine', 0.06);
+        stepIndex = (stepIndex + 1) % stepsInCurrentSong;
+      }, stepTime * 1000);
     }
 
-
-
     function startGameMusic(){
-      ensure();
-      // Clear any existing music first
-      if (musicTimer){ clearInterval(musicTimer); musicTimer = null; }
       currentMode = 'game';
-      // Small delay to ensure audio context is ready
-      setTimeout(() => {
-        startSong(0);
-      }, 10);
+      startSong(Math.floor(Math.random() * SONGS.length));
     }
 
     function stopAllMusic(){
-      if (musicTimer){ clearInterval(musicTimer); musicTimer = null; }
+      if (musicTimer) {
+        clearInterval(musicTimer);
+        musicTimer = null;
+      }
       currentMode = 'none';
-      // Reset step index to avoid any lingering state
-      stepIndex = 0;
-      currentSongIndex = 0;
-      stepsInCurrentSong = 0;
     }
 
     function stopMusic(){
-      stopAllMusic();
+      if (musicTimer) {
+        clearInterval(musicTimer);
+        musicTimer = null;
+      }
     }
 
-    return { resume, suspend, setMusicVol, setSfxVol, startGameMusic, stopMusic, stopAllMusic, playSuccess, playFail, playClick, ensure };
+    return { ensure, resume, suspend, setMusicVol, setSfxVol, playTone, playSuccess, playFail, playClick, playHighScore, startGameMusic, stopAllMusic, stopMusic };
   })();
 
-  // Toast / fun coach messages
-  let toastTimer;
   function showToast(message, mood='info'){
     toast.textContent = message;
+    toast.className = `toast ${mood}`;
     toast.classList.remove('hidden');
-    toast.style.borderColor = mood==='bad' ? '#ff4d6d' : mood==='good' ? '#2ecc71' : '#3a507f';
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(()=> toast.classList.add('hidden'), 1700);
+    setTimeout(() => toast.classList.add('hidden'), 3000);
   }
 
-  // Random helper
   const rnd = (min, max) => Math.random()*(max-min)+min;
 
-  // SVG graphics for equipment
   function equipmentSVG(name){
-    const common = {
-      stroke: '#0a1529',
-      metal: '#8fb3ff',
-      rubber: '#243a6b',
-      accent: '#38d39f'
+    // Equipment-specific SVG graphics
+    const graphics = {
+      'Dumbbell': `<svg viewBox="0 0 100 100" class="graphic">
+        <rect x="35" y="20" width="30" height="60" rx="15" fill="#c1f5ff"/>
+        <rect x="25" y="15" width="50" height="70" rx="20" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <circle cx="50" cy="25" r="8" fill="#38d39f"/>
+        <circle cx="50" cy="75" r="8" fill="#38d39f"/>
+      </svg>`,
+      'Treadmill': `<svg viewBox="0 0 100 100" class="graphic">
+        <rect x="20" y="40" width="60" height="20" rx="10" fill="#c1f5ff"/>
+        <rect x="15" y="35" width="70" height="30" rx="15" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <circle cx="30" cy="50" r="6" fill="#38d39f"/>
+        <circle cx="70" cy="50" r="6" fill="#38d39f"/>
+        <line x1="25" y1="50" x2="75" y2="50" stroke="#00a3ff" stroke-width="2" stroke-dasharray="5,5"/>
+      </svg>`,
+      'Kettlebell': `<svg viewBox="0 0 100 100" class="graphic">
+        <circle cx="50" cy="60" r="25" fill="#c1f5ff"/>
+        <rect x="45" y="20" width="10" height="25" rx="5" fill="#38d39f"/>
+        <rect x="40" y="15" width="20" height="35" rx="10" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <circle cx="50" cy="25" r="8" fill="#38d39f"/>
+      </svg>`,
+      'Rowing': `<svg viewBox="0 0 100 100" class="graphic">
+        <rect x="30" y="30" width="40" height="40" rx="20" fill="#c1f5ff"/>
+        <rect x="25" y="25" width="50" height="50" rx="25" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <line x1="20" y1="50" x2="80" y2="50" stroke="#38d39f" stroke-width="4"/>
+        <circle cx="35" cy="50" r="4" fill="#38d39f"/>
+        <circle cx="65" cy="50" r="4" fill="#38d39f"/>
+      </svg>`,
+      'Bench': `<svg viewBox="0 0 100 100" class="graphic">
+        <rect x="20" y="50" width="60" height="15" rx="7" fill="#c1f5ff"/>
+        <rect x="15" y="45" width="70" height="25" rx="12" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <rect x="25" y="35" width="50" height="8" rx="4" fill="#38d39f"/>
+        <rect x="20" y="30" width="60" height="18" rx="9" fill="none" stroke="#00a3ff" stroke-width="2"/>
+      </svg>`,
+      'Jump Rope': `<svg viewBox="0 0 100 100" class="graphic">
+        <path d="M 20 30 Q 50 10 80 30 Q 50 50 20 30" fill="none" stroke="#c1f5ff" stroke-width="3"/>
+        <path d="M 15 25 Q 50 5 85 25 Q 50 45 15 25" fill="none" stroke="#00a3ff" stroke-width="2"/>
+        <circle cx="20" cy="30" r="4" fill="#38d39f"/>
+        <circle cx="80" cy="30" r="4" fill="#38d39f"/>
+        <line x1="20" y1="30" x2="20" y2="70" stroke="#38d39f" stroke-width="2"/>
+        <line x1="80" y1="30" x2="80" y2="70" stroke="#38d39f" stroke-width="2"/>
+      </svg>`,
+      'Medicine Ball': `<svg viewBox="0 0 100 100" class="graphic">
+        <circle cx="50" cy="50" r="30" fill="#c1f5ff"/>
+        <circle cx="50" cy="50" r="35" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <path d="M 30 50 Q 50 30 70 50 Q 50 70 30 50" fill="#38d39f" opacity="0.7"/>
+        <path d="M 50 30 Q 70 50 50 70 Q 30 50 50 30" fill="#38d39f" opacity="0.7"/>
+      </svg>`,
+      'Bike': `<svg viewBox="0 0 100 100" class="graphic">
+        <circle cx="35" cy="60" r="15" fill="#c1f5ff"/>
+        <circle cx="65" cy="60" r="15" fill="#c1f5ff"/>
+        <circle cx="33" cy="58" r="17" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <circle cx="63" cy="58" r="17" fill="none" stroke="#00a3ff" stroke-width="3"/>
+        <rect x="45" y="30" width="10" height="25" rx="5" fill="#38d39f"/>
+        <rect x="43" y="28" width="14" height="29" rx="7" fill="none" stroke="#00a3ff" stroke-width="2"/>
+        <line x1="50" y1="35" x2="50" y2="45" stroke="#00a3ff" stroke-width="2"/>
+      </svg>`
     };
-    switch(name){
-      case 'Dumbbell':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <defs>
-              <linearGradient id="dbMetal" x1="0" x2="1">
-                <stop offset="0%" stop-color="#a9c8ff"/>
-                <stop offset="100%" stop-color="#5f86d7"/>
-              </linearGradient>
-            </defs>
-            <rect x="18" y="52" width="84" height="16" rx="6" fill="url(#dbMetal)" stroke="${common.stroke}"/>
-            <rect x="8" y="44" width="16" height="32" rx="6" fill="${common.rubber}" stroke="${common.stroke}"/>
-            <rect x="96" y="44" width="16" height="32" rx="6" fill="${common.rubber}" stroke="${common.stroke}"/>
-            <rect x="48" y="44" width="24" height="32" rx="6" fill="#d8e6ff" stroke="${common.stroke}" opacity=".9"/>
-          </svg>`;
-      case 'Kettlebell':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <path d="M40 48c0-12 10-22 22-22s22 10 22 22" fill="none" stroke="#5f86d7" stroke-width="10"/>
-            <ellipse cx="62" cy="78" rx="30" ry="26" fill="#2b3b66" stroke="${common.stroke}"/>
-          </svg>`;
-      case 'Treadmill':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <rect x="20" y="70" width="80" height="16" rx="8" fill="#223456" stroke="${common.stroke}"/>
-            <rect x="32" y="40" width="12" height="36" rx="6" fill="#5f86d7" stroke="${common.stroke}"/>
-            <rect x="78" y="40" width="12" height="36" rx="6" fill="#5f86d7" stroke="${common.stroke}"/>
-            <rect x="22" y="64" width="76" height="8" fill="#0d1a2f"/>
-          </svg>`;
-      case 'Rowing':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <rect x="28" y="64" width="64" height="10" rx="5" fill="#223456" stroke="${common.stroke}"/>
-            <circle cx="90" cy="69" r="10" fill="#2b3b66" stroke="${common.stroke}"/>
-            <rect x="38" y="48" width="18" height="10" rx="4" fill="#5f86d7" stroke="${common.stroke}"/>
-            <rect x="52" y="40" width="6" height="24" rx="3" fill="#d8e6ff" stroke="${common.stroke}"/>
-          </svg>`;
-      case 'Bench':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <rect x="26" y="56" width="68" height="14" rx="6" fill="#2b3b66" stroke="${common.stroke}"/>
-            <rect x="34" y="70" width="6" height="18" fill="#5f86d7" stroke="${common.stroke}"/>
-            <rect x="84" y="70" width="6" height="18" fill="#5f86d7" stroke="${common.stroke}"/>
-          </svg>`;
-      case 'Jump Rope':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <path d="M28 48c10-12 34-12 44 0s22 12 28 0" fill="none" stroke="#38d39f" stroke-width="6"/>
-            <rect x="18" y="44" width="10" height="16" rx="4" fill="#5f86d7" stroke="${common.stroke}"/>
-            <rect x="92" y="44" width="10" height="16" rx="4" fill="#5f86d7" stroke="${common.stroke}"/>
-          </svg>`;
-      case 'Medicine Ball':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <circle cx="60" cy="60" r="26" fill="#2b3b66" stroke="${common.stroke}"/>
-            <path d="M42 60h36" stroke="#5f86d7" stroke-width="6"/>
-          </svg>`;
-      case 'Bike':
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <circle cx="40" cy="80" r="14" fill="#203454" stroke="${common.stroke}"/>
-            <circle cx="84" cy="80" r="14" fill="#203454" stroke="${common.stroke}"/>
-            <path d="M40 80 L56 60 L76 80 L68 64 L84 64" fill="none" stroke="#5f86d7" stroke-width="6"/>
-          </svg>`;
-      default:
-        return `
-          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
-            <rect x="30" y="30" width="60" height="60" rx="12" fill="#2b3b66" stroke="${common.stroke}"/>
-          </svg>`;
-    }
+    return graphics[name] || `<div class="icon" style="font-size:32px">🏋️</div>`;
   }
 
-  // Game state
   let state = {
     playing: false,
     paused: false,
@@ -312,7 +312,8 @@
   function layoutEquipments(){
     const rect = gymEl.getBoundingClientRect();
     const width = rect.width; const height = rect.height;
-    const pad = 30; const size = 120; // equipment size basis
+    const pad = isMobile ? 20 : 30; 
+    const size = isMobile ? 90 : 120; // Smaller equipment on mobile
     const positions = [];
     for (let i=0;i<state.targetCount;i++){
       let attempts = 0; let placed = false; let x=0,y=0;
@@ -342,12 +343,18 @@
       const el = document.createElement('div');
       el.className = 'equipment';
       el.setAttribute('data-id', id);
+      
+      // Get high score for this equipment
+      const highScore = HighScores.getForEquipment(data.name);
+      const highScoreText = highScore ? `Best: ${highScore.score}pts` : '';
+      
       el.innerHTML = `
         <div class="progress-ring"></div>
         <div class="content">
-          <div class="icon" style="font-size:32px">${data.icon}</div>
+          ${equipmentSVG(data.name)}
           <div class="name">${data.name}</div>
           <div class="target">Hold: ${targetSeconds}s</div>
+          ${highScoreText ? `<div class="high-score">${highScoreText}</div>` : ''}
         </div>`;
       el.style.left = `${positions[i].x}px`;
       el.style.top  = `${positions[i].y}px`;
@@ -373,6 +380,7 @@
     qs('.progress-ring', el).classList.remove('fill');
     AudioEngine.playClick();
   }
+  
   function onHoldEnd(el, canceled=false){
     const id = el.getAttribute('data-id');
     const info = state.holds.get(id);
@@ -393,14 +401,39 @@
       qs('.progress-ring', el).classList.add('fill');
       const gained = Math.max(5, Math.round(100 * (1 - Math.min(1, delta / 3))));
       state.score += gained;
-      AudioEngine.playSuccess();
-      showToast(`Nailed it! +${gained} pts (off by ${delta.toFixed(1)}s)`, 'good');
+      
+      // Check for high score
+      const accuracy = Math.max(0, Math.round(100 * (1 - Math.min(1, delta / 2))));
+      const isNewHighScore = HighScores.update(info.name, gained, accuracy);
+      
+      if (isNewHighScore) {
+        AudioEngine.playHighScore();
+        showToast(`🏆 NEW HIGH SCORE for ${info.name}! +${gained} pts`, 'good');
+      } else {
+        AudioEngine.playSuccess();
+        showToast(`Nailed it! +${gained} pts (off by ${delta.toFixed(1)}s)`, 'good');
+      }
+      
       state.completed++;
       completedEl.textContent = String(state.completed);
       scoreEl.textContent = String(state.score);
       bigTimer.textContent = 'Pick another equipment';
       accuracyEl.textContent = '';
       el.classList.add('disabled');
+      
+      // Update the equipment display to show new high score
+      const highScoreText = `Best: ${gained}pts`;
+      const highScoreEl = qs('.high-score', el);
+      if (highScoreEl) {
+        highScoreEl.textContent = highScoreText;
+      } else {
+        const content = qs('.content', el);
+        const newHighScoreEl = document.createElement('div');
+        newHighScoreEl.className = 'high-score';
+        newHighScoreEl.textContent = highScoreText;
+        content.appendChild(newHighScoreEl);
+      }
+      
       if (state.completed >= state.targetCount){
         endGame(true);
       }
@@ -424,22 +457,52 @@
   }
 
   function attachEquipmentEvents(el){
-    // mouse
-    el.addEventListener('mousedown', (e)=>{ e.preventDefault(); onHoldStart(el); });
-    window.addEventListener('mouseup', (e)=>{
-      if (state.currentId === el.getAttribute('data-id')) onHoldEnd(el);
+    // Enhanced touch handling for mobile
+    if (isTouchDevice) {
+      // Touch events with better mobile handling
+      el.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onHoldStart(el);
+      }, { passive: false });
+      
+      el.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.currentId === el.getAttribute('data-id')) {
+          onHoldEnd(el);
+        }
+      }, { passive: false });
+      
+      el.addEventListener('touchcancel', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.currentId === el.getAttribute('data-id')) {
+          onHoldEnd(el, true);
+        }
+      }, { passive: false });
+      
+      // Prevent scrolling when touching equipment
+      el.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+      }, { passive: false });
+    }
+    
+    // Mouse events for desktop
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      onHoldStart(el);
     });
-    // touch
-    el.addEventListener('touchstart', (e)=>{ e.preventDefault(); onHoldStart(el); }, {passive:false});
-    window.addEventListener('touchend', (e)=>{
-      if (state.currentId === el.getAttribute('data-id')) onHoldEnd(el);
-    }, {passive:true});
-    window.addEventListener('touchcancel', (e)=>{
-      if (state.currentId === el.getAttribute('data-id')) onHoldEnd(el, true);
-    }, {passive:true});
-    // leave area cancels
-    el.addEventListener('mouseleave', ()=>{
-      if (state.currentId === el.getAttribute('data-id')){
+    
+    window.addEventListener('mouseup', (e) => {
+      if (state.currentId === el.getAttribute('data-id')) {
+        onHoldEnd(el);
+      }
+    });
+    
+    // Leave area cancels
+    el.addEventListener('mouseleave', () => {
+      if (state.currentId === el.getAttribute('data-id')) {
         onHoldEnd(el, true);
       }
     });
@@ -503,7 +566,16 @@
     state.playing = false;
     overlayEnd.classList.remove('hidden'); overlayEnd.setAttribute('aria-hidden','false');
     endTitle.textContent = won ? 'Champion Grip!' : 'Good Hustle!';
-    endStats.textContent = `Score: ${state.score} | Completed: ${state.completed}/${state.targetCount}`;
+    
+    // Show high scores summary
+    const highScores = HighScores.getAll();
+    const highScoreCount = Object.keys(highScores).length;
+    let statsText = `Score: ${state.score} | Completed: ${state.completed}/${state.targetCount}`;
+    if (highScoreCount > 0) {
+      statsText += ` | High Scores: ${highScoreCount} equipment types`;
+    }
+    endStats.textContent = statsText;
+    
     AudioEngine.playSuccess();
   }
 
@@ -567,6 +639,25 @@
     if (state.playing) e.preventDefault();
   });
 
+  // Mobile-specific optimizations
+  if (isMobile) {
+    // Prevent zoom on double tap
+    let lastTouchEnd = 0;
+    document.addEventListener('touchend', (e) => {
+      const now = (new Date()).getTime();
+      if (now - lastTouchEnd <= 300) {
+        e.preventDefault();
+      }
+      lastTouchEnd = now;
+    }, false);
+    
+    // Prevent pull-to-refresh on mobile
+    document.addEventListener('touchmove', (e) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    }, { passive: false });
+  }
 
 })();
 
