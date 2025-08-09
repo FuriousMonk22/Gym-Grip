@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gym Grip: Hold To Win</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Start/Menu Screen -->
+      <div id="screen-menu" class="screen active" aria-hidden="false">
+        <div class="title">
+          <h1>Gym Grip</h1>
+          <p class="subtitle">Hold tight. Win right.</p>
+        </div>
+        <div class="menu-buttons">
+          <button class="btn primary" id="btn-play">Play</button>
+          <button class="btn" id="btn-how">How to Play</button>
+          <button class="btn" id="btn-settings">Settings</button>
+          <button class="btn" id="btn-credits">Credits</button>
+        </div>
+        <div id="panel-how" class="panel hidden" role="dialog" aria-modal="false">
+          <h2>How to Play</h2>
+          <ul>
+            <li>Click an equipment in the gym.</li>
+            <li>Keep holding the mouse (or finger) on it until the clock hits its target time.</li>
+            <li>Release at or after the target to complete it. Accuracy = more points.</li>
+            <li>Don’t slip off the equipment – that resets your hold.</li>
+            <li>Finish all equipment to win. Press Esc/P to pause.</li>
+          </ul>
+          <button class="btn small" data-close-panel>Close</button>
+        </div>
+        <div id="panel-credits" class="panel hidden" role="dialog" aria-modal="false">
+          <h2>Credits</h2>
+          <p>Made with HTML, CSS and JavaScript. Sounds generated live with WebAudio.</p>
+          <button class="btn small" data-close-panel>Close</button>
+        </div>
+        <div id="panel-settings" class="panel hidden" role="dialog" aria-modal="false">
+          <h2>Settings</h2>
+          <div class="setting-row">
+            <label for="musicVolume">Music</label>
+            <input id="musicVolume" type="range" min="0" max="1" step="0.01" value="0.5" />
+          </div>
+          <div class="setting-row">
+            <label for="sfxVolume">SFX</label>
+            <input id="sfxVolume" type="range" min="0" max="1" step="0.01" value="0.8" />
+          </div>
+          <div class="setting-row">
+            <label class="switch">
+              <input id="highContrast" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+            <span>High Contrast</span>
+          </div>
+          <button class="btn small" data-close-panel>Close</button>
+        </div>
+      </div>
+
+      <!-- Game Screen -->
+      <div id="screen-game" class="screen" aria-hidden="true">
+        <div class="hud">
+          <div class="hud-left">
+            <div class="score">Score: <span id="score">0</span></div>
+            <div class="completed">Done: <span id="completed">0</span>/<span id="total">0</span></div>
+          </div>
+          <div class="hud-center">
+            <div id="big-timer" class="big-timer">Pick an equipment</div>
+            <div id="accuracy" class="accuracy"></div>
+          </div>
+          <div class="hud-right">
+            <button id="btn-pause" class="btn small">Pause (Esc/P)</button>
+            <div id="gym-clock" class="gym-clock" aria-label="Gym clock">00:00</div>
+          </div>
+        </div>
+        <div id="gym" class="gym" role="application" aria-label="Gym play area"></div>
+      </div>
+
+      <!-- Pause Overlay -->
+      <div id="overlay-pause" class="overlay hidden" aria-hidden="true">
+        <div class="card">
+          <h2>Paused</h2>
+          <div class="menu-buttons">
+            <button class="btn primary" id="btn-resume">Resume</button>
+            <button class="btn" id="btn-restart">Restart</button>
+            <button class="btn" id="btn-exit">Exit to Menu</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Win/Lose Overlay -->
+      <div id="overlay-end" class="overlay hidden" aria-hidden="true">
+        <div class="card">
+          <h2 id="end-title">Well done!</h2>
+          <p id="end-stats"></p>
+          <div class="menu-buttons">
+            <button class="btn primary" id="btn-play-again">Play Again</button>
+            <button class="btn" id="btn-exit-2">Exit to Menu</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fun Error Toast / Coach Messages -->
+      <div id="toast" class="toast hidden" aria-live="polite"></div>
+
+    </div>
+
+    <script src="game.js"></script>
+  </body>
+  </html>
+
+
